@@ -56,6 +56,8 @@ func normalizeAgentMemoryMode(mode string) string {
 type AdminController struct {
 	DB                  *gorm.DB
 	WebSocketController *WebSocketController
+	InternalAuthToken   string
+	EndpointAuthToken   string
 }
 
 // 通用配置管理
@@ -2930,7 +2932,7 @@ func (ac *AdminController) GetAgentMCPEndpoint(c *gin.Context) {
 	}
 
 	// 使用公共函数生成MCP接入点
-	endpoint, err := GenerateAgentMCPEndpoint(ac.DB, agentID, userID)
+	endpoint, err := GenerateAgentMCPEndpoint(ac.DB, agentID, userID, ac.EndpointAuthToken)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -2960,7 +2962,7 @@ func (ac *AdminController) GetAgentOpenClawEndpoint(c *gin.Context) {
 		return
 	}
 
-	endpoint, err := GenerateAgentOpenClawEndpoint(ac.DB, agentID, userID)
+	endpoint, err := GenerateAgentOpenClawEndpoint(ac.DB, agentID, userID, ac.EndpointAuthToken)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -4757,7 +4759,7 @@ func (ac *AdminController) DeleteMCPConfig(c *gin.Context) {
 }
 
 // GenerateAgentMCPEndpoint 公共的MCP接入点生成函数
-func GenerateAgentMCPEndpoint(db *gorm.DB, agentID string, userID uint) (string, error) {
+func GenerateAgentMCPEndpoint(db *gorm.DB, agentID string, userID uint, endpointAuthToken string) (string, error) {
 	// 获取OTA配置中的外网WebSocket URL
 	var otaConfig models.Config
 	if err := db.Where("type = ? AND is_default = ?", "ota", true).First(&otaConfig).Error; err != nil {
@@ -4795,7 +4797,7 @@ func GenerateAgentMCPEndpoint(db *gorm.DB, agentID string, userID uint) (string,
 	baseURL := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
 
 	// 生成MCP JWT token
-	token, err := generateMCPToken(agentID, userID)
+	token, err := generateMCPToken(agentID, userID, endpointAuthToken)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate MCP token: %v", err)
 	}
@@ -4807,7 +4809,7 @@ func GenerateAgentMCPEndpoint(db *gorm.DB, agentID string, userID uint) (string,
 }
 
 // GenerateAgentOpenClawEndpoint 公共的OpenClaw接入点生成函数
-func GenerateAgentOpenClawEndpoint(db *gorm.DB, agentID string, userID uint) (string, error) {
+func GenerateAgentOpenClawEndpoint(db *gorm.DB, agentID string, userID uint, endpointAuthToken string) (string, error) {
 	var otaConfig models.Config
 	if err := db.Where("type = ? AND is_default = ?", "ota", true).First(&otaConfig).Error; err != nil {
 		return "", fmt.Errorf("failed to get OTA config: %v", err)
@@ -4840,7 +4842,7 @@ func GenerateAgentOpenClawEndpoint(db *gorm.DB, agentID string, userID uint) (st
 
 	baseURL := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
 
-	token, err := generateOpenClawToken(agentID, userID)
+	token, err := generateOpenClawToken(agentID, userID, endpointAuthToken)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate OpenClaw token: %v", err)
 	}
@@ -4962,7 +4964,7 @@ func (ac *AdminController) SetDefaultMemoryConfig(c *gin.Context) {
 }
 
 // generateMCPToken 生成稳定的MCP JWT Token（同一agentID+userID下保持不变）
-func generateMCPToken(agentID string, userID uint) (string, error) {
+func generateMCPToken(agentID string, userID uint, endpointAuthToken string) (string, error) {
 	// 创建自定义的JWT Claims
 	type MCPClaims struct {
 		UserID     uint   `json:"userId"`
@@ -4989,7 +4991,7 @@ func generateMCPToken(agentID string, userID uint) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 
 	// 使用与middleware相同的密钥
-	jwtSecret := []byte("xiaozhi_admin_secret_key")
+	jwtSecret := []byte(strings.TrimSpace(endpointAuthToken))
 	tokenString, err := token.SignedString(jwtSecret)
 	if err != nil {
 		return "", err
@@ -4999,7 +5001,7 @@ func generateMCPToken(agentID string, userID uint) (string, error) {
 }
 
 // generateOpenClawToken 生成稳定的OpenClaw JWT Token（同一agentID+userID下保持不变）
-func generateOpenClawToken(agentID string, userID uint) (string, error) {
+func generateOpenClawToken(agentID string, userID uint, endpointAuthToken string) (string, error) {
 	type OpenClawClaims struct {
 		UserID     uint   `json:"user_id"`
 		AgentID    string `json:"agent_id"`
@@ -5018,7 +5020,7 @@ func generateOpenClawToken(agentID string, userID uint) (string, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	jwtSecret := []byte("xiaozhi_admin_secret_key")
+	jwtSecret := []byte(strings.TrimSpace(endpointAuthToken))
 	tokenString, err := token.SignedString(jwtSecret)
 	if err != nil {
 		return "", err
